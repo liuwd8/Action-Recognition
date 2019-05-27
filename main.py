@@ -13,37 +13,38 @@ import cv2
 from PIL import Image
 import time
 
-frame = 6
-# root = './something-something-v1'
-# datafolder = '20bn-something-something-v1'
+frame_count = 3
 
 class SSV2Dataset(Dataset):
     def __init__(self, root, mode='train', transform=None):
         super(SSV2Dataset, self).__init__()
         self.transform = transform
         
-        data_jsonfile = os.path.join(root, 'something-something-v2-' + mode +'.json')
+        data_jsonfile = os.path.join(root, f'something-something-v2-{mode}.json')
         if not os.path.exists(data_jsonfile):
             print('{} is not exist.'.format(data_jsonfile))
 
         with open(data_jsonfile, 'r', encoding='utf-8') as f:
             self.data_dict = json.load(f)
+            frames_file = os.path.join(root, f'something-something-v2-opencv_{mode}_frames.json')
+            with open(frames_file, 'r', encoding='utf-8') as ff:
+                frames_dict = json.load(ff)
             if mode != 'test':
                 label_jsonfile = os.path.join(root, 'something-something-v2-labels.json')
                 if not os.path.exists(label_jsonfile):
                     print('{} is not exist.'.format(label_jsonfile))
-                with open(label_jsonfile, 'r', encoding='utf-8') as f:
-                    labels = json.load(f)
+                with open(label_jsonfile, 'r', encoding='utf-8') as ftest:
+                    labels = json.load(ftest)
             for item in self.data_dict:
+                item['frames_total'] = frames_dict[item['id']]
                 item['id'] = os.path.join(root, '20bn-something-something-v2', item['id'] + '.webm')
                 if mode != 'test':
                     item['classidx'] = int(labels[item['template'].replace('[', '').replace(']', '')])
 
-    def loader(self, path):
+    def loader(self, path, total_frames):
         vc = cv2.VideoCapture(path)
-        # total = vc.get(cv2.CAP_PROP_FRAME_COUNT)
-        # index = np.linspace(0, total, frame + 2, dtype=np.long)
-        # count = 0
+        index = np.linspace(0, total_frames, frame_count + 1, dtype=np.long)
+        count = 0
         images = []
         if vc.isOpened(): #判断是否正常打开
             rval , frame = vc.read()
@@ -51,18 +52,18 @@ class SSV2Dataset(Dataset):
             rval = False
         while rval:
             images.append(self.transform(Image.fromarray(frame)).numpy())
-            # count += 1
-            # vc.set(cv2.CAP_PROP_POS_FRAMES, index[count])
+            count += 1
+            vc.set(cv2.CAP_PROP_POS_FRAMES, index[count])
             rval , frame = vc.read()
         # if len(images) != 10:
-            # print(path, total)
-        index = np.linspace(0, len(images), frame + 2, dtype=np.long)
+        #     print(path, total)
+        # index = np.linspace(0, len(images), frame_count + 2, dtype=np.long)
         vc.release()
-        return np.array(images)[index[1:-1]]
+        return np.array(images)#[index[1:-1]]
     
     def __getitem__(self, index):
-        path, target = self.data_dict[index]['id'], self.data_dict[index]['classidx']
-        sample = self.loader(path)
+        path, total_frames, target = self.data_dict[index]['id'], self.data_dict[index]['frames_total'], self.data_dict[index]['classidx']
+        sample = self.loader(path, total_frames)
         return torch.Tensor(sample), target
     
     def __len__(self):
@@ -82,7 +83,7 @@ class SSV1Dataset(Dataset):
 
     def loader(self, videoitem):
         path = os.path.join(self.root, '20bn-something-something-v1', str(videoitem[0]))
-        index = np.linspace(0, videoitem[1], frame + 2, dtype=np.long)
+        index = np.linspace(0, videoitem[1], frame_count + 2, dtype=np.long)
         images = []
         for i in index[1:-1]:
             images.append(self.pil_loader(path + '/{:05d}.jpg'.format(i + 1)))
@@ -96,26 +97,7 @@ class SSV1Dataset(Dataset):
     def __len__(self):
         return len(self.data_dict)
 
-batch_size = 16
-
-# def collate_fn(batch):
-#     result, label = [], []
-#     for i in batch:
-#         for j in i[0]:
-#             result.append(j.numpy())
-#         label.append(i[1])
-#     return torch.Tensor(result), torch.Tensor(label).long()
-
-# train_transform = torchvision.transforms.Compose([
-#     transforms.Resize((240, 320)),
-#     transforms.ToTensor(),
-# ])
-# val_transform = torchvision.transforms.Compose([
-#     transforms.Resize((240, 320)),
-#     transforms.ToTensor(),
-# ])
-# train_set = SSV2Dataset(root='./something-something-v2', mode='train', transform=train_transform)
-# val_set = SSV2Dataset(root='./something-something-v2', mode='validation', transform=val_transform)
+batch_size = 32
 
 def collate_fn(batch):
     result, label = [], []
@@ -126,15 +108,34 @@ def collate_fn(batch):
     return torch.Tensor(result), torch.Tensor(label).long()
 
 train_transform = torchvision.transforms.Compose([
-    transforms.Resize((100, 224)),
+    transforms.Resize((240, 320)),
     transforms.ToTensor(),
 ])
 val_transform = torchvision.transforms.Compose([
-    transforms.Resize((100, 224)),
+    transforms.Resize((240, 320)),
     transforms.ToTensor(),
 ])
-train_set = SSV1Dataset(root='./something-something-v1', mode='train', transform=train_transform)
-val_set = SSV1Dataset(root='./something-something-v1', mode='val', transform=val_transform)
+train_set = SSV2Dataset(root='./something-something-v2', mode='train', transform=train_transform)
+val_set = SSV2Dataset(root='./something-something-v2', mode='validation', transform=val_transform)
+
+# def collate_fn(batch):
+#     result, label = [], []
+#     for i in batch:
+#         for j in i[0]:
+#             result.append(j.numpy())
+#         label.append(i[1])
+#     return torch.Tensor(result), torch.Tensor(label).long()
+
+# train_transform = torchvision.transforms.Compose([
+#     transforms.Resize((100, 224)),
+#     transforms.ToTensor(),
+# ])
+# val_transform = torchvision.transforms.Compose([
+#     transforms.Resize((100, 224)),
+#     transforms.ToTensor(),
+# ])
+# train_set = SSV1Dataset(root='./something-something-v1', mode='train', transform=train_transform)
+# val_set = SSV1Dataset(root='./something-something-v1', mode='val', transform=val_transform)
 
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn = collate_fn)
 val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=False, collate_fn = collate_fn)
@@ -189,7 +190,6 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
  
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -228,7 +228,6 @@ class ResNet(nn.Module):
         
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
  
         return x
 
@@ -240,9 +239,13 @@ class BasicModel(nn.Module):
         super(BasicModel, self).__init__()
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
-        self.videoframe = frame
+        self.videoframe = frame_count
         self.resnet50 = resnet50(embedding_dim)
         if torch.cuda.device_count() > 1:
+            weight = torch.load('resnet50-19c8e357.pth')
+            weight.pop('fc.weight', None)
+            weight.pop('fc.bias', None)
+            self.resnet50.load_state_dict(weight)
             self.resnet50 = nn.DataParallel(self.resnet50,device_ids=[4,5,6,7])
 
         self.lstm = nn.LSTM(embedding_dim, hidden_dim)
@@ -252,8 +255,8 @@ class BasicModel(nn.Module):
     def forward(self, x):
         embeds = self.resnet50(x)
         lstm_out, _ = self.lstm(embeds.view(-1, self.videoframe, self.embedding_dim).transpose(1, 0))
-        lstm_avg_out = self.avgpool(lstm_out.transpose(1, 0).view(-1, 1, self.videoframe, self.hidden_dim))
-        tag_scores = self.fc(lstm_avg_out.view(-1, self.hidden_dim))
+        lstm_out = lstm_out.transpose(1, 0).view(-1, self.videoframe, self.hidden_dim)[:, -1]
+        tag_scores = self.fc(lstm_out)
         return tag_scores
 
 def save_model(model, save_path):
@@ -280,12 +283,12 @@ def train(model, train_loader, loss_func, optimizer, device):
         
         if (i+1) % 100 == 0:
             # print loss and acc
-            print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Train loss: %.3f | Train AVG loss: %.3f | Train Acc: %.3f%% (%d/%d)'
-                % (total_loss/(i+1), loss.item(), 100.*correct/total, correct, total)))
+            print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Train AVG loss: %6.3f | Train Acc: %6.3f%% (%d/%d)'
+                % (total_loss/(i+1), 100.*correct/total, correct, total)))
 
-    print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Train AVG loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+    print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Train AVG loss: %6.3f | Train Acc: %6.3f%% (%d/%d)'
         % (total_loss/(i+1), 100.*correct/total, correct, total)))
-
+ 
     return total_loss / len(train_loader)
 
 def evaluate(model, val_loader, loss_func, device):
@@ -306,33 +309,36 @@ def evaluate(model, val_loader, loss_func, device):
 
             if (i+1) % 100 == 0:
                 # print loss and acc
-                print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Test  loss: %.3f | Test  AVG loss: %.3f | Test  Acc: %.3f%% (%d/%d)'
-                    % (total_loss/(i+1), loss.item(), 100.*correct/total, correct, total)))
+                print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Test  AVG loss: %6.3f | Test  Acc: %6.3f%% (%d/%d)'
+                    % (total_loss/(i+1), 100.*correct/total, correct, total)))
 
-        print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Test  AVG loss: %.3f | Test  Acc: %.3f%% (%d/%d)'
+        print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Test  AVG loss: %6.3f | Test  Acc: %6.3f%% (%d/%d)'
             % (total_loss/(i+1), 100.*correct/total, correct, total)))
 
         return total_loss / len(val_loader)
 
-lr = 1e-3
-embedding_dim, hidden_dim = 1024, 4096
+lr = 1e-2
+embedding_dim, hidden_dim = 2048, 4096
 n_labels = 174
 
 device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
 model = BasicModel(embedding_dim, hidden_dim, n_labels)
 model.to(device)
-if os.path.exists('model/wdsr-pre.pt'):
-    model.load_state_dict(torch.load('model/wdsr-pre.pt'))
+# if os.path.exists('model/BasicModel-pre.pt'):
+#     model.load_state_dict(torch.load('model/BasicModel-pre.pt'))
 loss_func = nn.CrossEntropyLoss().to(device)
 # optimizer
 # define the SGD optimizer, lr、momentum、weight_decay is adjustable
-# optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+# optimizer = optim.SGD(model.parameters(), lr=lr)
 # define the Adam
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 losses = []
 accs = []
 num_epochs = 20
+
+if not os.path.exists("model"):
+    os.mkdir("model")
 
 for epoch in range(num_epochs):
     print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + ' | Epoch {}/{}:'.format(epoch + 1, num_epochs))
@@ -343,12 +349,9 @@ for epoch in range(num_epochs):
     evaluate_loss = evaluate(model, val_loader, loss_func, device)
     accs.append(evaluate_loss)
 
-    if not os.path.exists("model"):
-        os.mkdir("model")
-    save_model(model, "model/wdsr{}.pt".format(epoch + 1))
+    save_model(model, "model/BasicModel{}.pt".format(epoch + 1))
 
-    if (epoch + 1) % 1 == 0 :
-        lr = 0.8 * lr
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-    
+    # if (epoch + 1) % 1 == 0 :
+    #     lr = 0.8 * lr
+    #     for param_group in optimizer.param_groups:
+    #         param_group['lr'] = lr
