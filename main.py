@@ -13,7 +13,7 @@ import cv2
 from PIL import Image
 import time
 
-frame_count = 3
+frame_count = 10 #在这里修改帧数
 
 class SSV2Dataset(Dataset):
     def __init__(self, root, mode='train', transform=None):
@@ -32,32 +32,25 @@ class SSV2Dataset(Dataset):
                 with open(label_jsonfile, 'r', encoding='utf-8') as ftest:
                     labels = json.load(ftest)
             
-            if mode == 'train':
-                index = 100000
-                frames_file = os.path.join(root, f'something-something-v2-opencv_{mode}_frames.json')
-                with open(frames_file, 'r', encoding='utf-8') as ff:
-                    frames_dict = json.load(ff)
-                for item in self.data_dict[:index]:
-                    item['frames_total'] = 0
-                    item['id'] = os.path.join(root, 'images', item['id'])
-                    item['classidx'] = int(labels[item['template'].replace('[', '').replace(']', '')])
-                for item in self.data_dict[index:]:
-                    item['frames_total'] = frames_dict[item['id']]
-                    item['id'] = os.path.join(root, '20bn-something-something-v2', item['id'] + '.webm')
-                    item['classidx'] = int(labels[item['template'].replace('[', '').replace(']', '')])
-            else:
-                for item in self.data_dict:
-                    item['frames_total'] = 0
-                    item['id'] = os.path.join(root, 'images', item['id'])
-                    item['loader'] = self.imageFolder_loader
-                    if mode != 'test':
-                        item['classidx'] = int(labels[item['template'].replace('[', '').replace(']', '')])
-                    else:
-                        item['classidx'] = -1
+            for index in range(len(self.data_dict) - 1, -1, -1):
+                item = self.data_dict[index]
+                if item['id'] == '150886' or item['id'] == '140678':
+                    del self.data_dict[index]
 
-    def imageFolder_loader(self, path, total_frames):
+            for item in self.data_dict:
+                if item['id'] == '150886' or item['id'] == '140678':
+                    self.data_dict.pop(item, None)
+                    continue
+                item['id'] = os.path.join(root, 'images', item['id'])
+                item['loader'] = self.imageFolder_loader
+                if mode != 'test':
+                    item['classidx'] = int(labels[item['template'].replace('[', '').replace(']', '')])
+                else:
+                    item['classidx'] = -1
+
+    def imageFolder_loader(self, path):
         images = []
-        index = np.linspace(0, 9, frame_count+2, dtype=np.long)[1:-1]
+        index = np.linspace(0, 9, frame_count, dtype=np.long)
         for i in index:
             with open(f'{path}/{i:03d}.png', 'rb') as f:
                 images.append(self.transform(Image.open(f).convert('RGB')).numpy())
@@ -84,11 +77,8 @@ class SSV2Dataset(Dataset):
         return images#[index[1:-1]]
     
     def __getitem__(self, index):
-        path, total_frames, target = self.data_dict[index]['id'], self.data_dict[index]['frames_total'], self.data_dict[index]['classidx']
-        if index < 100000:
-            sample = self.imageFolder_loader(path, total_frames)
-        else:
-            sample = self.opencv_loader(path, total_frames)
+        path, target = self.data_dict[index]['id'], self.data_dict[index]['classidx']
+        sample = self.imageFolder_loader(path)
         return sample, target
     
     def __len__(self):
@@ -122,7 +112,7 @@ class SSV1Dataset(Dataset):
     def __len__(self):
         return len(self.data_dict)
 
-batch_size = 64
+batch_size = 8
 
 def collate_fn(batch):
     result, label = [], []
@@ -313,7 +303,7 @@ def train(model, train_loader, loss_func, optimizer, device):
     print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Train AVG loss: %6.3f | Train Acc: %6.3f%% (%d/%d)'
         % (total_loss/(i+1), 100.*correct/total, correct, total)))
  
-    return total_loss / len(train_loader)
+    return total_loss / len(train_loader), 100.*correct/total
 
 def evaluate(model, val_loader, loss_func, device):
     model.eval()
@@ -339,9 +329,9 @@ def evaluate(model, val_loader, loss_func, device):
         print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + (' | Test  AVG loss: %6.3f | Test  Acc: %6.3f%% (%d/%d)'
             % (total_loss/(i+1), 100.*correct/total, correct, total)))
 
-        return total_loss / len(val_loader)
+        return total_loss / len(val_loader), 100.*correct/total
 
-lr = 1e-3
+lr = 1e-3 #学习率
 embedding_dim, hidden_dim = 2048, 4096
 n_labels = 174
 
@@ -367,12 +357,16 @@ if not os.path.exists("model"):
 for epoch in range(num_epochs):
     print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()) + f' | Epoch {epoch + 1}/{num_epochs}:')
     # train step
-    loss = train(model, train_loader, loss_func, optimizer, device)
+    loss, correct_rate = train(model, train_loader, loss_func, optimizer, device)
     losses.append(loss)
+    with open('log.txt', 'a') as f:
+        f.write(f'epoch: {epoch + 1} | frames: {frame_count} | Train AVG loss: {loss} | Train Acc: {correct_rate}\n')
     # evaluate step
-    evaluate_loss = evaluate(model, val_loader, loss_func, device)
+    evaluate_loss, evaluate_correct_rate = evaluate(model, val_loader, loss_func, device)
     accs.append(evaluate_loss)
-
+    with open('log.txt', 'a') as f:
+        f.write(f'epoch: {epoch + 1} | frames: {frame_count} | Test  AVG loss: {evaluate_loss} | Test  Acc: {evaluate_correct_rate}\n')
+    
     save_model(model, f"model/BasicModel{epoch + 1}.pt")
 
     # if (epoch + 1) % 1 == 0 :
